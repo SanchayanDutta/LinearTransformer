@@ -66,42 +66,45 @@ class Transformer_F(nn.Module):
         self.n_head = n_head
 
     def forward(self, Z):
-        R = torch.zeros_like(Z)  # Initialize R_0 as a zero tensor
-        prev_attention_sum_last_row_norm = None  # To store the norm of the (d+1)-th row of the previous layer's attention_sum
+      R = torch.zeros_like(Z)  # Initialize R_0 as a zero tensor
+      prev_attention_sum_last_row_norm = None  # To store the norm of the (d+1)-th row of the previous layer's attention_sum
 
-        for i in range(self.n_layer):
-            Zi = Z
-            attention_sum = torch.zeros_like(Z)
+      B, N_plus_1, d_plus_1 = Z.shape  # Get the dimensions from Z
+      d = d_plus_1 - 1  # Calculate d
 
-            # Compute Attn_{P_l, Q_l}(Z_l) for the current layer and heads
-            for j in range(self.n_head):
-                Pij = self.allparam[i, j, 0, :, :]
-                Qij = self.allparam[i, j, 1, :, :]
-                attention_sum += attention(Pij, Qij, Zi)
+      for i in range(self.n_layer):
+          Zi = Z
+          attention_sum = torch.zeros_like(Z)
 
-            # Calculate the norm of the (d+1)-th row of attention_sum
-            attention_sum_last_row_norm = torch.norm(attention_sum[:, :, d], p=2, dim=1)
+          # Compute Attn_{P_l, Q_l}(Z_l) for the current layer and heads
+          for j in range(self.n_head):
+              Pij = self.allparam[i, j, 0, :, :]
+              Qij = self.allparam[i, j, 1, :, :]
+              attention_sum += attention(Pij, Qij, Zi)
 
-            # Update gamma for the current layer
-            if i == 0:
-                gamma = 1.0  # Set gamma_1 = 1 for the first layer
-            else:
-                gamma = (attention_sum_last_row_norm / prev_attention_sum_last_row_norm) ** 2
+          # Calculate the norm of the (d+1)-th row of attention_sum
+          attention_sum_last_row_norm = torch.norm(attention_sum[:, :, d], p=2, dim=1)
 
-            # Update R_l according to the recursive formula
-            R = gamma.unsqueeze(1).unsqueeze(2) * R + attention_sum
+          # Update gamma for the current layer
+          if i == 0:
+              gamma = 1.0  # Set gamma_1 = 1 for the first layer
+          else:
+              gamma = (attention_sum_last_row_norm / prev_attention_sum_last_row_norm) ** 2
 
-            # Update Z_l to Z_{l+1}
-            Z = Zi + R
+          # Update R_l according to the recursive formula
+          R = gamma.unsqueeze(1).unsqueeze(2) * R + attention_sum
 
-            # Store the norm of the last row for the next layer's gamma calculation
-            prev_attention_sum_last_row_norm = attention_sum_last_row_norm
+          # Update Z_l to Z_{l+1}
+          Z = Zi + R
 
-            # Ensure that prev_attention_sum_last_row_norm does not contain zeros
-            if i > 0 and prev_attention_sum_last_row_norm.abs().min().item() < 1e-8:
+          # Store the norm of the last row for the next layer's gamma calculation
+          prev_attention_sum_last_row_norm = attention_sum_last_row_norm
+
+          # Ensure that prev_attention_sum_last_row_norm does not contain zeros
+          if i > 0 and prev_attention_sum_last_row_norm.abs().min().item() < 1e-8:
               prev_attention_sum_last_row_norm = prev_attention_sum_last_row_norm + 1e-8
 
-        return Z
+      return Z
 
     # Enforces top-left dxd-block sparsity on P
     def zero_p(self):
@@ -116,7 +119,7 @@ def in_context_loss(model, Z, y):
     d = Z.shape[2]-1
     output = model(Z)
     diff = output[:,N,d]+y
-    loss = ((diff)**2).mean() 
+    loss = ((diff)**2).mean()
     return loss
 
 # generate random data for linear regression
