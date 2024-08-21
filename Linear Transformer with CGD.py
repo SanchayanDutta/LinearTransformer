@@ -94,11 +94,12 @@ class Transformer_F(nn.Module):
             # Update Z_l to Z_{l+1}
             Z = Zi + R
 
+            # Store the norm of the last row for the next layer's gamma calculation
+            prev_attention_sum_last_row_norm = attention_sum_last_row_norm
+            
             # Ensure that prev_attention_sum_last_row_norm does not contain zeros
             if i > 0 and prev_attention_sum_last_row_norm.abs().min().item() < 1e-8:
               prev_attention_sum_last_row_norm = prev_attention_sum_last_row_norm + 1e-8
-            # Store the norm of the last row for the next layer's gamma calculation
-            prev_attention_sum_last_row_norm = attention_sum_last_row_norm
 
         return Z
 
