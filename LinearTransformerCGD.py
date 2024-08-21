@@ -96,7 +96,7 @@ class Transformer_F(nn.Module):
 
             # Store the norm of the last row for the next layer's gamma calculation
             prev_attention_sum_last_row_norm = attention_sum_last_row_norm
-            
+
             # Ensure that prev_attention_sum_last_row_norm does not contain zeros
             if i > 0 and prev_attention_sum_last_row_norm.abs().min().item() < 1e-8:
               prev_attention_sum_last_row_norm = prev_attention_sum_last_row_norm + 1e-8
@@ -109,6 +109,15 @@ class Transformer_F(nn.Module):
             for j in range(self.n_head):
                 with torch.no_grad():
                     self.allparam[i, j, 0, :, :].zero_()
+
+# evaluate the loss of model, given data (Z,y)
+def in_context_loss(model, Z, y):
+    N = Z.shape[1]-1
+    d = Z.shape[2]-1
+    output = model(Z)
+    diff = output[:,N,d]+y
+    loss = ((diff)**2).mean() 
+    return loss
 
 # generate random data for linear regression
 # mode: distribution of samples to generate. Currently supports 'normal', 'gamma', 'sphere'
