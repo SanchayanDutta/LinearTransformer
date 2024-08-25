@@ -87,7 +87,7 @@ class Transformer_F(nn.Module):
             else:
                 gamma = - (attention_sum_last_row_norm / prev_attention_sum_last_row_norm) ** 2
 
-            Z = gamma * R + attention_sum
+            R = gamma * R + attention_sum
             Z = Zi + R
 
             # Store the norm of the last row for the next layer's gamma calculation
