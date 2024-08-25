@@ -8,6 +8,7 @@
 # the paper at https://arxiv.org/pdf/2306.00297.pdf
 ###########################################
 
+
 import torch
 from torch import nn
 import numpy as np
@@ -46,6 +47,7 @@ def attention(P,Q,Z, activation = None):
     Output = torch.einsum('BNM,ML, BLi -> BNi', (Attn,A,key))
     return Output /N
 
+
 # The Linear Transformer module
 # n_layer denotes the number of layers
 # n_head denotes the number of heads. In most of our experiments, n_head = 1
@@ -55,63 +57,53 @@ def attention(P,Q,Z, activation = None):
 # For example
 # - P matrix at layer i, head j is allparam[i,j,0,:,:]
 # - Q matrix at layer i, head j is allparam[i,j,1,:,:]
-
 class Transformer_F(nn.Module):
     def __init__(self, n_layer, n_head, d, var):
         super(Transformer_F, self).__init__()
         self.register_parameter('allparam', torch.nn.Parameter(torch.zeros(n_layer, n_head, 2, d, d)))
         with torch.no_grad():
-            self.allparam.normal_(0, var)
+            self.allparam.normal_(0,var)
         self.n_layer = n_layer
         self.n_head = n_head
 
     def forward(self, Z):
-      R = torch.zeros_like(Z)  # Initialize R_0 as a zero tensor
-      prev_attention_sum_last_row_norm = None  # To store the norm of the (d+1)-th row of the previous layer's attention_sum
+        R = 0
+        for i in range(self.n_layer):
+            Zi = Z
+            attention_sum = 0
+            prev_attention_sum_last_row_norm = 0
+            # the forwarad map of each layer is given by F(Z) = Z + attention(Z)
+            for j in range(self.n_head):
+                Pij = self.allparam[i,j,0,:,:]
+                Qij = self.allparam[i,j,1,:,:]
+                attention_sum = attention_sum + attention(Pij,Qij,Zi)
 
-      B, N_plus_1, d_plus_1 = Z.shape  # Get the dimensions from Z
-      d = d_plus_1 - 1  # Calculate d
+            # Calculate the norm of the (d+1)-th row of attention_sum
+            attention_sum_last_row_norm = torch.norm(attention_sum[:, :, -1], p=2, dim=1)
 
-      for i in range(self.n_layer):
-          Zi = Z
-          attention_sum = torch.zeros_like(Z)
+            # Update gamma for the current layer
+            if i == 0:
+                gamma = 0  # Set gamma_1 = 0 for the first layer
+            else:
+                gamma = - (attention_sum_last_row_norm / prev_attention_sum_last_row_norm) ** 2
 
-          # Compute Attn_{P_l, Q_l}(Z_l) for the current layer and heads
-          for j in range(self.n_head):
-              Pij = self.allparam[i, j, 0, :, :]
-              Qij = self.allparam[i, j, 1, :, :]
-              attention_sum += attention(Pij, Qij, Zi)
+            Z = gamma * R + attention_sum
+            Z = Zi + R
 
-          # Calculate the norm of the (d+1)-th row of attention_sum
-          attention_sum_last_row_norm = torch.norm(attention_sum[:, :, d], p=2, dim=1)
+            # Store the norm of the last row for the next layer's gamma calculation
+            prev_attention_sum_last_row_norm = attention_sum_last_row_norm
 
-          # Update gamma for the current layer
-          if i == 0:
-              gamma = 1.0  # Set gamma_1 = 1 for the first layer
-          else:
-              gamma = (attention_sum_last_row_norm / prev_attention_sum_last_row_norm) ** 2
+            # Ensure that prev_attention_sum_last_row_norm does not contain zeros
+            if i > 0 and prev_attention_sum_last_row_norm.abs().min().item() < 1e-8:
+                prev_attention_sum_last_row_norm = prev_attention_sum_last_row_norm + 1e-8
+        return Z
 
-          # Update R_l according to the recursive formula
-          R = gamma.unsqueeze(1).unsqueeze(2) * R + attention_sum
-
-          # Update Z_l to Z_{l+1}
-          Z = Zi + R
-
-          # Store the norm of the last row for the next layer's gamma calculation
-          prev_attention_sum_last_row_norm = attention_sum_last_row_norm
-
-          # Ensure that prev_attention_sum_last_row_norm does not contain zeros
-          if i > 0 and prev_attention_sum_last_row_norm.abs().min().item() < 1e-8:
-              prev_attention_sum_last_row_norm = prev_attention_sum_last_row_norm + 1e-8
-
-      return Z
-
-    # Enforces top-left dxd-block sparsity on P
+    #enforces top-left-dxd-block sparsity on p
     def zero_p(self):
         for i in range(self.n_layer):
             for j in range(self.n_head):
                 with torch.no_grad():
-                    self.allparam[i, j, 0, :, :].zero_()
+                    self.allparam[i,j,0,:,:].zero_()
 
 # evaluate the loss of model, given data (Z,y)
 def in_context_loss(model, Z, y):
