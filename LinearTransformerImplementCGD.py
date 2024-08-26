@@ -57,21 +57,29 @@ def attention(P,Q,Z, activation = None):
 # For example
 # - P matrix at layer i, head j is allparam[i,j,0,:,:]
 # - Q matrix at layer i, head j is allparam[i,j,1,:,:]
+# If run_mode = 0 then training. If run_mode = 1 then in-context learning.
 class Transformer_F(nn.Module):
-    def __init__(self, n_layer, n_head, d, var):
+    def __init__(self, n_layer, n_head, d, var, run_mode):
         super(Transformer_F, self).__init__()
         self.register_parameter('allparam', torch.nn.Parameter(torch.zeros(n_layer, n_head, 2, d, d)))
         with torch.no_grad():
             self.allparam.normal_(0,var)
         self.n_layer = n_layer
         self.n_head = n_head
+        self.run_mode = run_mode
 
     def forward(self, Z):
-        R = 0
+        R = torch.zeros_like(Z)
+        
+        B = Z.shape[0]
+        N = Z.shape[1]-1
+        d = Z.shape[2]-1
+
+        prev_attention_sum_last_row_norm = torch.zeros(B)
+
         for i in range(self.n_layer):
             Zi = Z
-            attention_sum = 0
-            prev_attention_sum_last_row_norm = 0
+            attention_sum = torch.zeros_like(Z)
             # the forwarad map of each layer is given by F(Z) = Z + attention(Z)
             for j in range(self.n_head):
                 Pij = self.allparam[i,j,0,:,:]
@@ -83,19 +91,25 @@ class Transformer_F(nn.Module):
 
             # Update gamma for the current layer
             if i == 0:
-                gamma = 0  # Set gamma_1 = 0 for the first layer
+                gamma = torch.zeros(B)  # Set gamma_1 = 0 for the first layer and convert to tensor
             else:
-                gamma = - (attention_sum_last_row_norm / prev_attention_sum_last_row_norm) ** 2
+                gamma = (attention_sum_last_row_norm / prev_attention_sum_last_row_norm) ** 2
 
-            R = gamma * R + attention_sum
+            gamma = gamma.view(B, 1, 1)
+
+            if self.run_mode == 0:
+                R = R * 0 + attention_sum
+            else:
+                R = R * gamma.expand(B, N + 1, d + 1) + attention_sum
+
             Z = Zi + R
 
             # Store the norm of the last row for the next layer's gamma calculation
             prev_attention_sum_last_row_norm = attention_sum_last_row_norm
 
-            # Ensure that prev_attention_sum_last_row_norm does not contain zeros
-            if i > 0 and prev_attention_sum_last_row_norm.abs().min().item() < 1e-8:
-                prev_attention_sum_last_row_norm = prev_attention_sum_last_row_norm + 1e-8
+            #Ensure that prev_attention_sum_last_row_norm does not contain zeros
+            #if i > 0 and prev_attention_sum_last_row_norm.abs().min().item() < 1e-2:
+            #    prev_attention_sum_last_row_norm = prev_attention_sum_last_row_norm + 1e-2
         return Z
 
     #enforces top-left-dxd-block sparsity on p
@@ -104,6 +118,15 @@ class Transformer_F(nn.Module):
             for j in range(self.n_head):
                 with torch.no_grad():
                     self.allparam[i,j,0,:,:].zero_()
+
+# evaluate the loss of model, given data (Z,y)
+def in_context_loss(model, Z, y):
+    N = Z.shape[1]-1
+    d = Z.shape[2]-1
+    output = model(Z)
+    diff = output[:,N,d]+y
+    loss = ((diff)**2).mean()
+    return loss
 
 # evaluate the loss of model, given data (Z,y)
 def in_context_loss(model, Z, y):
